@@ -81,13 +81,17 @@ func (s *exchangeInfoServiceTestSuite) TestExchangeInfo() {
 						"limit": 100
 					},
 					{
+						"notional": "5",
+						"filterType": "MIN_NOTIONAL"
+					},
+					{
 						"filterType": "PERCENT_PRICE",
 						"multiplierUp": "1.1500",
 						"multiplierDown": "0.8500",
-						"multiplierDecimal": 4
+						"multiplierDecimal": "4"
 					}
 				],
-				"OrderType": [
+				"orderType": [
 					"LIMIT",
 					"MARKET",
 					"STOP",
@@ -101,7 +105,9 @@ func (s *exchangeInfoServiceTestSuite) TestExchangeInfo() {
 					"IOC", 
 					"FOK", 
 					"GTX" 
-				]
+				],
+				"liquidationFee": "0.010000",
+				"marketTakeBound": "0.30"
 			}
 		],
 		"timezone": "UTC" 
@@ -123,7 +129,7 @@ func (s *exchangeInfoServiceTestSuite) TestExchangeInfo() {
 			{RateLimitType: "REQUEST_WEIGHT", Interval: "MINUTE", IntervalNum: 1, Limit: 2400},
 			{RateLimitType: "ORDERS", Interval: "MINUTE", IntervalNum: 1, Limit: 1200},
 		},
-		ExchangeFilters: []interface{}{},
+		ExchangeFilters: []any{},
 		Symbols: []Symbol{
 			{
 				Symbol:                "BLZUSDT",
@@ -145,50 +151,63 @@ func (s *exchangeInfoServiceTestSuite) TestExchangeInfo() {
 				UnderlyingSubType:     []string{"STORAGE"},
 				SettlePlan:            0,
 				TriggerProtect:        "0.15",
-				OrderType: []OrderType{OrderTypeLimit, OrderTypeMarket, OrderTypeStop, OrderTypeStopMarket,
-					OrderTypeTakeProfit, OrderTypeTakeProfitMarket, OrderTypeTrailingStopMarket},
-				TimeInForce: []TimeInForceType{TimeInForceTypeGTC, TimeInForceTypeIOC, TimeInForceTypeFOK, TimeInForceTypeGTX},
-				Filters: []map[string]interface{}{
+				OrderType:             []OrderType{OrderTypeLimit, OrderTypeMarket, OrderType(AlgoOrderTypeStop), OrderType(AlgoOrderTypeStopMarket), OrderType(AlgoOrderTypeTakeProfit), OrderType(AlgoOrderTypeTakeProfitMarket), OrderType(AlgoOrderTypeTrailingStopMarket)},
+				TimeInForce:           []TimeInForceType{TimeInForceTypeGTC, TimeInForceTypeIOC, TimeInForceTypeFOK, TimeInForceTypeGTX},
+				Filters: []map[string]any{
 					{"filterType": "PRICE_FILTER", "minPrice": "0.0001", "maxPrice": "300", "tickSize": "0.0001"},
 					{"filterType": "LOT_SIZE", "minQty": "1", "maxQty": "10000000", "stepSize": "1"},
 					{"filterType": "MARKET_LOT_SIZE", "maxQty": "590119", "minQty": "1", "stepSize": "1"},
 					{"filterType": "MAX_NUM_ORDERS", "limit": 200},
 					{"filterType": "MAX_NUM_ALGO_ORDERS", "limit": 100},
-					{"filterType": "PERCENT_PRICE", "multiplierUp": "1.1500", "multiplierDown": "0.8500", "multiplierDecimal": 4},
+					{"filterType": "MIN_NOTIONAL", "notional": "5"},
+					{"filterType": "PERCENT_PRICE", "multiplierUp": "1.1500", "multiplierDown": "0.8500", "multiplierDecimal": "4"},
 				},
+				LiquidationFee:  "0.010000",
+				MarketTakeBound: "0.30",
 			},
 		},
 	}
 	s.assertExchangeInfoEqual(ei, res)
-	s.r().Len(ei.Symbols[0].Filters, 6, "Filters")
+	s.r().Len(ei.Symbols[0].Filters, 7, "Filters")
+
 	ePriceFilter := &PriceFilter{
 		MaxPrice: "300",
 		MinPrice: "0.0001",
 		TickSize: "0.0001",
 	}
 	s.assertPriceFilterEqual(ePriceFilter, res.Symbols[0].PriceFilter())
+
 	eLotSizeFilter := &LotSizeFilter{
 		MaxQuantity: "10000000",
 		MinQuantity: "1",
 		StepSize:    "1",
 	}
 	s.assertLotSizeFilterEqual(eLotSizeFilter, res.Symbols[0].LotSizeFilter())
+
 	eMarketLotSizeFilter := &MarketLotSizeFilter{
 		MaxQuantity: "590119",
 		MinQuantity: "1",
 		StepSize:    "1",
 	}
 	s.assertMarketLotSizeFilterEqual(eMarketLotSizeFilter, res.Symbols[0].MarketLotSizeFilter())
+
 	eMaxNumOrdersFilter := &MaxNumOrdersFilter{
 		Limit: 200,
 	}
 	s.assertMaxNumOrdersFilterEqual(eMaxNumOrdersFilter, res.Symbols[0].MaxNumOrdersFilter())
+
 	eMaxNumAlgoOrdersFilter := &MaxNumAlgoOrdersFilter{
 		Limit: 100,
 	}
 	s.assertMaxNumAlgoOrdersFilterEqual(eMaxNumAlgoOrdersFilter, res.Symbols[0].MaxNumAlgoOrdersFilter())
+
+	eMinNotional := &MinNotionalFilter{
+		Notional: "5",
+	}
+	s.assertMinNotionalFilterEqual(eMinNotional, res.Symbols[0].MinNotionalFilter())
+
 	ePercentPriceFilter := &PercentPriceFilter{
-		MultiplierDecimal: 4,
+		MultiplierDecimal: "4",
 		MultiplierUp:      "1.1500",
 		MultiplierDown:    "0.8500",
 	}
@@ -229,6 +248,35 @@ func (s *exchangeInfoServiceTestSuite) assertExchangeInfoEqual(e, a *ExchangeInf
 		r.Equal(e.Symbols[i].UnderlyingType, a.Symbols[i].UnderlyingType, "UnderlyingType")
 		r.Equal(e.Symbols[i].SettlePlan, a.Symbols[i].SettlePlan, "SettlePlan")
 		r.Equal(e.Symbols[i].TriggerProtect, a.Symbols[i].TriggerProtect, "TriggerProtect")
+
+		for fi, currentFilter := range a.Symbols[i].Filters {
+			r.Len(currentFilter, len(e.Symbols[i].Filters[fi]))
+			switch currentFilter["filterType"] {
+			case "PRICE_FILTER":
+				r.Equal(e.Symbols[i].PriceFilter().MinPrice, a.Symbols[i].PriceFilter().MinPrice, "MinPrice")
+				r.Equal(e.Symbols[i].PriceFilter().MaxPrice, a.Symbols[i].PriceFilter().MaxPrice, "MaxPrice")
+				r.Equal(e.Symbols[i].PriceFilter().TickSize, a.Symbols[i].PriceFilter().TickSize, "TickSize")
+			case "LOT_SIZE":
+				r.Equal(e.Symbols[i].LotSizeFilter().MinQuantity, a.Symbols[i].LotSizeFilter().MinQuantity, "MinQuantity")
+				r.Equal(e.Symbols[i].LotSizeFilter().MaxQuantity, a.Symbols[i].LotSizeFilter().MaxQuantity, "MaxQuantity")
+				r.Equal(e.Symbols[i].LotSizeFilter().StepSize, a.Symbols[i].LotSizeFilter().StepSize, "StepSize")
+			case "MARKET_LOT_SIZE":
+				r.Equal(e.Symbols[i].MarketLotSizeFilter().MinQuantity, a.Symbols[i].MarketLotSizeFilter().MinQuantity, "MinQuantity")
+				r.Equal(e.Symbols[i].MarketLotSizeFilter().MaxQuantity, a.Symbols[i].MarketLotSizeFilter().MaxQuantity, "MaxQuantity")
+				r.Equal(e.Symbols[i].MarketLotSizeFilter().StepSize, a.Symbols[i].MarketLotSizeFilter().StepSize, "StepSize")
+			case "MAX_NUM_ORDERS":
+				r.Equal(e.Symbols[i].MaxNumOrdersFilter().Limit, a.Symbols[i].MaxNumOrdersFilter().Limit, "Limit")
+			case "MAX_NUM_ALGO_ORDERS":
+				r.Equal(e.Symbols[i].MaxNumAlgoOrdersFilter().Limit, a.Symbols[i].MaxNumAlgoOrdersFilter().Limit, "Limit")
+			case "MIN_NOTIONAL":
+				r.Equal(e.Symbols[i].MinNotionalFilter().Notional, a.Symbols[i].MinNotionalFilter().Notional, "Notional")
+			case "PERCENT_PRICE":
+				r.Equal(e.Symbols[i].PercentPriceFilter().MultiplierDecimal, a.Symbols[i].PercentPriceFilter().MultiplierDecimal, "MultiplierDecimal")
+				r.Equal(e.Symbols[i].PercentPriceFilter().MultiplierUp, a.Symbols[i].PercentPriceFilter().MultiplierUp, "MultiplierUp")
+				r.Equal(e.Symbols[i].PercentPriceFilter().MultiplierDown, a.Symbols[i].PercentPriceFilter().MultiplierDown, "MultiplierDown")
+			}
+		}
+
 		r.Len(a.Symbols[i].OrderType, len(e.Symbols[i].OrderType))
 		for j, orderType := range e.Symbols[i].OrderType {
 			r.Equal(orderType, a.Symbols[i].OrderType[j], "OrderType")
@@ -241,6 +289,8 @@ func (s *exchangeInfoServiceTestSuite) assertExchangeInfoEqual(e, a *ExchangeInf
 		for j, UnderlyingSubType := range e.Symbols[i].UnderlyingSubType {
 			r.Equal(UnderlyingSubType, a.Symbols[i].UnderlyingSubType[j], "UnderlyingSubType")
 		}
+		r.Equal(e.Symbols[i].LiquidationFee, a.Symbols[i].LiquidationFee, "LiquidationFee")
+		r.Equal(e.Symbols[i].MarketTakeBound, a.Symbols[i].MarketTakeBound, "MarketTakeBound")
 	}
 }
 
@@ -256,6 +306,11 @@ func (s *exchangeInfoServiceTestSuite) assertPriceFilterEqual(e, a *PriceFilter)
 	r.Equal(e.MaxPrice, a.MaxPrice, "MaxPrice")
 	r.Equal(e.MinPrice, a.MinPrice, "MinPrice")
 	r.Equal(e.TickSize, a.TickSize, "TickSize")
+}
+
+func (s *exchangeInfoServiceTestSuite) assertMinNotionalFilterEqual(e, a *MinNotionalFilter) {
+	r := s.r()
+	r.Equal(e.Notional, a.Notional, "Notional")
 }
 
 func (s *exchangeInfoServiceTestSuite) assertPercentPriceFilterEqual(e, a *PercentPriceFilter) {

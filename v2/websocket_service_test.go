@@ -2,7 +2,6 @@ package binance
 
 import (
 	"errors"
-	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/suite"
@@ -10,7 +9,7 @@ import (
 
 type websocketServiceTestSuite struct {
 	baseTestSuite
-	origWsServe func(*WsConfig, WsHandler, ErrHandler) (chan struct{}, chan struct{}, error)
+	origWsServe func(*WsConfig, WsHandler, ErrHandler, ConnHandler) (chan struct{}, chan struct{}, error)
 	serveCount  int
 }
 
@@ -19,16 +18,16 @@ func TestWebsocketService(t *testing.T) {
 }
 
 func (s *websocketServiceTestSuite) SetupTest() {
-	s.origWsServe = wsServe
+	s.origWsServe = wsServeWithConnHandler
 }
 
 func (s *websocketServiceTestSuite) TearDownTest() {
-	wsServe = s.origWsServe
+	wsServeWithConnHandler = s.origWsServe
 	s.serveCount = 0
 }
 
 func (s *websocketServiceTestSuite) mockWsServe(data []byte, err error) {
-	wsServe = func(cfg *WsConfig, handler WsHandler, errHandler ErrHandler) (doneC, stopC chan struct{}, innerErr error) {
+	wsServeWithConnHandler = func(cfg *WsConfig, handler WsHandler, errHandler ErrHandler, connHandler ConnHandler) (doneC, stopC chan struct{}, innerErr error) {
 		s.serveCount++
 		doneC = make(chan struct{})
 		stopC = make(chan struct{})
@@ -681,6 +680,73 @@ func (s *websocketServiceTestSuite) TestWsCombinedKlineServe() {
 	<-doneC
 }
 
+func (s *websocketServiceTestSuite) TestWsCombinedKlineServeMultiInterval() {
+	data := []byte(`{
+	"stream":"ethbtc@kline_1m",
+	"data": {
+        "e": "kline",
+        "E": 1499404907056,
+        "s": "ETHBTC",
+        "k": {
+            "t": 1499404860000,
+            "T": 1499404919999,
+            "s": "ETHBTC",
+            "i": "1m",
+            "f": 77462,
+            "L": 77465,
+            "o": "0.10278577",
+            "c": "0.10278645",
+            "h": "0.10278712",
+            "l": "0.10278518",
+            "v": "17.47929838",
+            "n": 4,
+            "x": false,
+            "q": "1.79662878",
+            "V": "2.34879839",
+            "Q": "0.24142166",
+            "B": "13279784.01349473"
+        }
+	}}`)
+	fakeErrMsg := "fake error"
+	s.mockWsServe(data, errors.New(fakeErrMsg))
+	defer s.assertWsServe()
+
+	input := map[string][]string{
+		"ETHBTC": {"1m", "5m"},
+	}
+	doneC, stopC, err := WsCombinedKlineServeMultiInterval(input, func(event *WsKlineEvent) {
+		e := &WsKlineEvent{
+			Event:  "kline",
+			Time:   1499404907056,
+			Symbol: "ETHBTC",
+			Kline: WsKline{
+				StartTime:            1499404860000,
+				EndTime:              1499404919999,
+				Symbol:               "ETHBTC",
+				Interval:             "1m",
+				FirstTradeID:         77462,
+				LastTradeID:          77465,
+				Open:                 "0.10278577",
+				Close:                "0.10278645",
+				High:                 "0.10278712",
+				Low:                  "0.10278518",
+				Volume:               "17.47929838",
+				TradeNum:             4,
+				IsFinal:              false,
+				QuoteVolume:          "1.79662878",
+				ActiveBuyVolume:      "2.34879839",
+				ActiveBuyQuoteVolume: "0.24142166",
+			},
+		}
+		s.assertWsKlineEventEqual(e, event)
+	}, func(err error) {
+		s.r().EqualError(err, fakeErrMsg)
+	})
+	s.r().NoError(err)
+	stopC <- struct{}{}
+	<-doneC
+}
+
 func (s *websocketServiceTestSuite) TestWsCombinedAggTradeServe() {
 	data := []byte(`{
 	"stream":"ethbtc@aggTrade",
@@ -747,50 +813,71 @@ func (s *websocketServiceTestSuite) assertAccountUpdate(e, a *WsAccountUpdate) {
 
 func (s *websocketServiceTestSuite) assertOrderUpdate(e, a *WsOrderUpdate) {
 	r := s.r()
-	r.Equal(e.TransactionTime, a.TransactionTime, "TransactionTime")
 	r.Equal(e.Symbol, a.Symbol, "Symbol")
-	r.Equal(e.Volume, a.Volume, "Volume")
-	r.Equal(e.QuoteVolume, a.QuoteVolume, "QuoteVolume")
-	r.Equal(e.Price, a.Price, "Price")
+	r.Equal(e.ClientOrderId, a.ClientOrderId, "ClientOrderId")
 	r.Equal(e.Side, a.Side, "Side")
-	r.Equal(e.IsMaker, a.IsMaker, "IsMaker")
-	r.Equal(e.Status, a.Status, "Status")
-	r.Equal(e.TimeInForce, a.TimeInForce, "TimeInForce")
 	r.Equal(e.Type, a.Type, "Type")
-	r.Equal(e.CreateTime, a.CreateTime, "CreateTime")
-	r.Equal(e.Id, a.Id, "Id")
+	r.Equal(e.TimeInForce, a.TimeInForce, "TimeInForce")
+	r.Equal(e.Volume, a.Volume, "Volume")
+	r.Equal(e.Price, a.Price, "Price")
 	r.Equal(e.StopPrice, a.StopPrice, "StopPrice")
-	r.Equal(e.TradeId, a.TradeId, "TradeId")
+	r.Equal(e.IceBergVolume, a.IceBergVolume, "IceBergVolume")
+	r.Equal(e.OrderListId, a.OrderListId, "OrderListId")
+	r.Equal(e.OrigCustomOrderId, a.OrigCustomOrderId, "OrigCustomOrderId")
 	r.Equal(e.ExecutionType, a.ExecutionType, "ExecutionType")
+	r.Equal(e.Status, a.Status, "Status")
+	r.Equal(e.RejectReason, a.RejectReason, "RejectReason")
+	r.Equal(e.Id, a.Id, "Id")
+	r.Equal(e.LatestVolume, a.LatestVolume, "LatestVolume")
+	r.Equal(e.FilledVolume, a.FilledVolume, "FilledVolume")
+	r.Equal(e.LatestPrice, a.LatestPrice, "LatestPrice")
 	r.Equal(e.FeeAsset, a.FeeAsset, "FeeAsset")
 	r.Equal(e.FeeCost, a.FeeCost, "FeeCost")
-	r.Equal(e.FilledQuoteVolume, a.FilledQuoteVolume, "FilledQuoteVolume")
-	r.Equal(e.FilledVolume, a.FilledVolume, "FilledVolume")
-	r.Equal(e.IceBergVolume, a.IceBergVolume, "IceBergVolume")
+	r.Equal(e.TransactionTime, a.TransactionTime, "TransactionTime")
+	r.Equal(e.TradeId, a.TradeId, "TradeId")
+	r.Equal(e.IgnoreI, a.IgnoreI, "IgnoreI")
 	r.Equal(e.IsInOrderBook, a.IsInOrderBook, "IsInOrderBook")
-	r.Equal(e.LatestPrice, a.LatestPrice, "LatestPrice")
-	r.Equal(e.OrderListId, a.OrderListId, "LatestQuoteVolume")
+	r.Equal(e.IsMaker, a.IsMaker, "IsMaker")
+	r.Equal(e.IgnoreM, a.IgnoreM, "IgnoreM")
+	r.Equal(e.CreateTime, a.CreateTime, "CreateTime")
+	r.Equal(e.FilledQuoteVolume, a.FilledQuoteVolume, "FilledQuoteVolume")
 	r.Equal(e.LatestQuoteVolume, a.LatestQuoteVolume, "LatestQuoteVolume")
-	r.Equal(e.LatestVolume, a.LatestVolume, "OrigCustomOrderId")
-	r.Equal(e.OrigCustomOrderId, a.OrigCustomOrderId, "OrigCustomOrderId")
-	r.Equal(e.RejectReason, a.RejectReason, "RejectReason")
+	r.Equal(e.QuoteVolume, a.QuoteVolume, "QuoteVolume")
+	r.Equal(e.SelfTradePreventionMode, a.SelfTradePreventionMode, "SelfTradePreventionMode")
+
+	r.Equal(e.TrailingDelta, a.TrailingDelta, "TrailingDelta")
+	r.Equal(e.TrailingTime, a.TrailingTime, "TrailingTime")
+	r.Equal(e.StrategyId, a.StrategyId, "StrategyId")
+	r.Equal(e.StrategyType, a.StrategyType, "StrategyType")
+	r.Equal(e.PreventedMatchId, a.PreventedMatchId, "PreventedMatchId")
+	r.Equal(e.PreventedQuantity, a.PreventedQuantity, "PreventedQuantity")
+	r.Equal(e.LastPreventedQuantity, a.LastPreventedQuantity, "LastPreventedQuantity")
+	r.Equal(e.TradeGroupId, a.TradeGroupId, "TradeGroupId")
+	r.Equal(e.CounterOrderId, a.CounterOrderId, "CounterOrderId")
+	r.Equal(e.CounterSymbol, a.CounterSymbol, "CounterSymbol")
+	r.Equal(e.PreventedExecutionQuantity, a.PreventedExecutionQuantity, "PreventedExecutionQuantity")
+	r.Equal(e.PreventedExecutionPrice, a.PreventedExecutionPrice, "PreventedExecutionPrice")
+	r.Equal(e.PreventedExecutionQuoteQty, a.PreventedExecutionQuoteQty, "PreventedExecutionQuoteQty")
+	r.Equal(e.WorkingTime, a.WorkingTime, "WorkingTime")
+	r.Equal(e.MatchType, a.MatchType, "MatchType")
+	r.Equal(e.AllocationId, a.AllocationId, "AllocationId")
+	r.Equal(e.WorkingFloor, a.WorkingFloor, "WorkingFloor")
+	r.Equal(e.UsedSor, a.UsedSor, "UsedSor")
 }
 
 func (s *websocketServiceTestSuite) assertBalanceUpdate(e, a *WsBalanceUpdate) {
 	r := s.r()
 	r.Equal(e.Asset, a.Asset)
 	r.Equal(e.Change, a.Change)
+	r.Equal(e.TransactionTime, a.TransactionTime)
 }
 
 func (s *websocketServiceTestSuite) assertUserDataEvent(e, a *WsUserDataEvent) {
 	r := s.r()
 	r.Equal(e.Event, a.Event, "Event")
 	r.Equal(e.Time, a.Time, "Time")
-	fmt.Println(e.TransactionTime, a.TransactionTime)
-	r.Equal(e.TransactionTime, a.TransactionTime, "TransactionTime")
-	r.Equal(e.AccountUpdateTime, a.AccountUpdateTime, "AccountUpdateTime")
-	for i, e := range e.AccountUpdate {
-		a := a.AccountUpdate[i]
+	for i, e := range e.AccountUpdate.WsAccountUpdates {
+		a := a.AccountUpdate.WsAccountUpdates[i]
 		s.assertAccountUpdate(&e, &a)
 	}
 	s.assertOrderUpdate(&e.OrderUpdate, &a.OrderUpdate)
@@ -827,88 +914,287 @@ func (s *websocketServiceTestSuite) TestWsUserDataServeAccountUpdate() {
 	   ]
 	}`)
 	expectedEvent := &WsUserDataEvent{
-		Event:             "outboundAccountPosition",
-		Time:              1629771130464,
-		AccountUpdateTime: 1629771130463,
-		AccountUpdate: []WsAccountUpdate{
-			{
-				"LTC",
-				"503.70000000",
-				"0.00000000",
+		Event: "outboundAccountPosition",
+		Time:  1629771130464,
+		AccountUpdate: WsAccountUpdateList{
+			1629771130463,
+			[]WsAccountUpdate{
+				{
+					"LTC",
+					"503.70000000",
+					"0.00000000",
+				},
 			},
 		},
 	}
 	s.testWsUserDataServe(data, expectedEvent)
 }
 
-func (s *websocketServiceTestSuite) TestWsUserDataServeOrderUpdate() {
+func (s *websocketServiceTestSuite) TestWsUserDataServeOrderUpdateWithExample() {
+	//Using example data from the API documentation
 	data := []byte(`{
-	   "e":"executionReport",
-	   "E":1629771130464,
-	   "s":"LTCUSDT",
-	   "c":"MRx05dQCeTigiV1u1rfhUs",
-	   "S":"BUY",
-	   "o":"MARKET",
-	   "f":"GTC",
-	   "q":"0.10000000",
-	   "p":"0.00000000",
-	   "P":"0.00000000",
-	   "F":"0.00000000",
-	   "g":-1,
-	   "C":"",
-	   "x":"TRADE",
-	   "X":"FILLED",
-	   "r":"NONE",
-	   "i":18997,
-	   "l":"0.10000000",
-	   "z":"0.10000000",
-	   "L":"175.37000000",
-	   "n":"0.00000000",
-	   "N":"LTC",
-	   "T":1629771130463,
-	   "t":1473,
-	   "I":314739191,
-	   "w":false,
-	   "m":false,
-	   "M":true,
-	   "O":1629771130463,
-	   "Z":"17.53700000",
-	   "Y":"17.53700000",
-	   "Q":"0.00000000"
+          "e":  "executionReport",
+          "E":  1499405658658,
+          "s":  "ETHBTC",
+          "c":  "mUvoqJxFIILMdfAW5iGSOW",
+          "S":  "BUY",
+          "o":  "LIMIT",
+          "f":  "GTC",
+          "q":  "1.00000000",
+          "p":  "0.10264410",
+          "P":  "0.00000000",
+          "F":  "0.00000000",
+          "g":  -1,
+          "C":  "",
+          "x":  "NEW",
+          "X":  "NEW",
+          "r":  "NONE",
+          "i":  4293153,
+          "l":  "0.00000000",
+          "z":  "0.00000000",
+          "L":  "0.00000000",
+          "n":  "0",
+          "N":  null,
+          "T":  1499405658657,
+          "t":  -1,
+          "I":  8641984,
+          "w":  true,
+          "m":  false,
+          "M":  false,
+          "O":  1499405658657,
+          "Z":  "0.00000000",
+          "Y":  "0.00000000",
+          "Q":  "0.00000000",
+          "V":  "NONE",
+          "d":  4,
+          "D":  1668680518494,
+          "j":  1,
+          "J":  1000000,
+          "v":  3,
+          "A":  "3.000000",
+          "B":  "3.000000",
+          "u":  1,
+          "U":  37,
+          "Cs":  "BTCUSDT",
+          "pl":  "2.123456",
+          "pL":  "0.10000001",
+          "pY":  "0.21234562",
+          "W":  1668683798379,
+          "b":  "ONE_PARTY_TRADE_REPORT",
+          "a":  1234,
+          "k":  "SOR",
+          "uS":  true
 	}`)
 	expectedEvent := &WsUserDataEvent{
-		Event:           "executionReport",
-		Time:            1629771130464,
-		TransactionTime: 1629771130463,
+		Event: "executionReport",
+		Time:  1499405658658,
 		OrderUpdate: WsOrderUpdate{
-			Symbol:            "LTCUSDT",
-			ClientOrderId:     "MRx05dQCeTigiV1u1rfhUs",
-			Side:              "BUY",
-			Type:              "MARKET",
-			TimeInForce:       "GTC",
-			Volume:            "0.10000000",
-			Price:             "0.00000000",
-			StopPrice:         "0.00000000",
-			IceBergVolume:     "0.00000000",
-			OrderListId:       -1,
-			OrigCustomOrderId: "",
-			ExecutionType:     "TRADE",
-			Status:            "FILLED",
-			RejectReason:      "NONE",
-			Id:                18997,
-			LatestVolume:      "0.10000000",
-			FilledVolume:      "0.10000000",
-			LatestPrice:       "175.37000000",
-			FeeAsset:          "LTC",
-			FeeCost:           "0.00000000",
-			TransactionTime:   1629771130463,
-			TradeId:           1473,
-			IsInOrderBook:     false,
-			IsMaker:           true,
-			CreateTime:        1629771130463,
-			FilledQuoteVolume: "17.53700000",
-			LatestQuoteVolume: "17.53700000",
-			QuoteVolume:       "0.00000000",
+			Symbol:                     "ETHBTC",
+			ClientOrderId:              "mUvoqJxFIILMdfAW5iGSOW",
+			Side:                       "BUY",
+			Type:                       "LIMIT",
+			TimeInForce:                "GTC",
+			Volume:                     "1.00000000",
+			Price:                      "0.10264410",
+			StopPrice:                  "0.00000000",
+			IceBergVolume:              "0.00000000",
+			OrderListId:                -1,
+			OrigCustomOrderId:          "",
+			ExecutionType:              "NEW",
+			Status:                     "NEW",
+			RejectReason:               "NONE",
+			Id:                         4293153,
+			LatestVolume:               "0.00000000",
+			FilledVolume:               "0.00000000",
+			LatestPrice:                "0.00000000",
+			FeeAsset:                   "",
+			FeeCost:                    "0",
+			TransactionTime:            1499405658657,
+			TradeId:                    -1,
+			IgnoreI:                    8641984,
+			IsInOrderBook:              true,
+			IsMaker:                    false,
+			IgnoreM:                    false,
+			CreateTime:                 1499405658657,
+			FilledQuoteVolume:          "0.00000000",
+			LatestQuoteVolume:          "0.00000000",
+			QuoteVolume:                "0.00000000",
+			SelfTradePreventionMode:    "NONE",
+			TrailingDelta:              4,
+			TrailingTime:               1668680518494,
+			StrategyId:                 1,
+			StrategyType:               1000000,
+			PreventedMatchId:           3,
+			PreventedQuantity:          "3.000000",
+			LastPreventedQuantity:      "3.000000",
+			TradeGroupId:               1,
+			CounterOrderId:             37,
+			CounterSymbol:              "BTCUSDT",
+			PreventedExecutionQuantity: "2.123456",
+			PreventedExecutionPrice:    "0.10000001",
+			PreventedExecutionQuoteQty: "0.21234562",
+			WorkingTime:                1668683798379,
+			MatchType:                  "ONE_PARTY_TRADE_REPORT",
+			AllocationId:               1234,
+			WorkingFloor:               "SOR",
+			UsedSor:                    true,
+		},
+	}
+	s.testWsUserDataServe(data, expectedEvent)
+}
+func (s *websocketServiceTestSuite) TestWsUserDataServeOrderUpdateWithPendingOrder() {
+	//Use pending order data
+	data := []byte(`{
+          "e":  "executionReport",
+          "E":  1709393629467,
+          "s":  "FDUSDUSDT",
+          "c":  "ios_2249e2aa2d394cada23b8e2e5b8ecdb9",
+          "S":  "BUY",
+          "o":  "LIMIT",
+          "f":  "GTC",
+          "q":  "1000.00000000",
+          "p":  "0.99700000",
+          "P":  "0.00000000",
+          "F":  "0.00000000",
+          "g":  -1,
+          "C":  "",
+          "x":  "NEW",
+          "X":  "NEW",
+          "r":  "NONE",
+          "i":  98534826,
+          "l":  "0.00000000",
+          "z":  "0.00000000",
+          "L":  "0.00000000",
+          "n":  "0",
+          "N":  null,
+          "T":  1709393629467,
+          "t":  -1,
+          "I":  270913746,
+          "w":  true,
+          "m":  false,
+          "M":  false,
+          "O":  1709393629467,
+          "Z":  "0.00000000",
+          "Y":  "0.00000000",
+          "Q":  "0.00000000",
+          "W":  1709393629467,
+          "V":  "EXPIRE_MAKER"
+	}`)
+	expectedEvent := &WsUserDataEvent{
+		Event: "executionReport",
+		Time:  1709393629467,
+		OrderUpdate: WsOrderUpdate{
+			Symbol:                  "FDUSDUSDT",
+			ClientOrderId:           "ios_2249e2aa2d394cada23b8e2e5b8ecdb9",
+			Side:                    "BUY",
+			Type:                    "LIMIT",
+			TimeInForce:             "GTC",
+			Volume:                  "1000.00000000",
+			Price:                   "0.99700000",
+			StopPrice:               "0.00000000",
+			IceBergVolume:           "0.00000000",
+			OrderListId:             -1,
+			OrigCustomOrderId:       "",
+			ExecutionType:           "NEW",
+			Status:                  "NEW",
+			RejectReason:            "NONE",
+			Id:                      98534826,
+			LatestVolume:            "0.00000000",
+			FilledVolume:            "0.00000000",
+			LatestPrice:             "0.00000000",
+			FeeAsset:                "",
+			FeeCost:                 "0",
+			TransactionTime:         1709393629467,
+			TradeId:                 -1,
+			IgnoreI:                 270913746,
+			IsInOrderBook:           true,
+			IsMaker:                 false,
+			IgnoreM:                 false,
+			CreateTime:              1709393629467,
+			FilledQuoteVolume:       "0.00000000",
+			LatestQuoteVolume:       "0.00000000",
+			QuoteVolume:             "0.00000000",
+			WorkingTime:             1709393629467,
+			SelfTradePreventionMode: "EXPIRE_MAKER",
+		},
+	}
+	s.testWsUserDataServe(data, expectedEvent)
+}
+
+func (s *websocketServiceTestSuite) TestWsUserDataServeOrderUpdateWithTradeOrder() {
+	//Use trade order data
+	data := []byte(`{
+          "e":  "executionReport",
+          "E":  1709393640518,
+          "s":  "FDUSDUSDT",
+          "c":  "ios_54d9b18d8e7a4caf9d149573e16480ba",
+          "S":  "BUY",
+          "o":  "LIMIT",
+          "f":  "GTC",
+          "q":  "100.00000000",
+          "p":  "0.99750000",
+          "P":  "0.00000000",
+          "F":  "0.00000000",
+          "g":  -1,
+          "C":  "",
+          "x":  "TRADE",
+          "X":  "FILLED",
+          "r":  "NONE",
+          "i":  98534864,
+          "l":  "100.00000000",
+          "z":  "100.00000000",
+          "L":  "0.99750000",
+          "n":  "0.00000000",
+          "N":  "BNB",
+          "T":  1709393640518,
+          "t":  73839999,
+          "I":  270913853,
+          "w":  false,
+          "m":  false,
+          "M":  true,
+          "O":  1709393640518,
+          "Z":  "99.75000000",
+          "Y":  "99.75000000",
+          "Q":  "0.00000000",
+          "W":  1709393640518,
+          "V":  "EXPIRE_MAKER"
+	}`)
+	expectedEvent := &WsUserDataEvent{
+		Event: "executionReport",
+		Time:  1709393640518,
+		OrderUpdate: WsOrderUpdate{
+			Symbol:                  "FDUSDUSDT",
+			ClientOrderId:           "ios_54d9b18d8e7a4caf9d149573e16480ba",
+			Side:                    "BUY",
+			Type:                    "LIMIT",
+			TimeInForce:             "GTC",
+			Volume:                  "100.00000000",
+			Price:                   "0.99750000",
+			StopPrice:               "0.00000000",
+			IceBergVolume:           "0.00000000",
+			OrderListId:             -1,
+			OrigCustomOrderId:       "",
+			ExecutionType:           "TRADE",
+			Status:                  "FILLED",
+			RejectReason:            "NONE",
+			Id:                      98534864,
+			LatestVolume:            "100.00000000",
+			FilledVolume:            "100.00000000",
+			LatestPrice:             "0.99750000",
+			FeeAsset:                "BNB",
+			FeeCost:                 "0.00000000",
+			TransactionTime:         1709393640518,
+			TradeId:                 73839999,
+			IgnoreI:                 270913853,
+			IsInOrderBook:           false,
+			IsMaker:                 false,
+			IgnoreM:                 true,
+			CreateTime:              1709393640518,
+			FilledQuoteVolume:       "99.75000000",
+			LatestQuoteVolume:       "99.75000000",
+			QuoteVolume:             "0.00000000",
+			WorkingTime:             1709393640518,
+			SelfTradePreventionMode: "EXPIRE_MAKER",
 		},
 	}
 	s.testWsUserDataServe(data, expectedEvent)
@@ -1458,4 +1744,62 @@ func (s *websocketServiceTestSuite) assertWsBookTickerEvent(e, a *WsBookTickerEv
 	r.Equal(e.BestBidQty, a.BestBidQty, "BestBidQty")
 	r.Equal(e.BestAskPrice, a.BestAskPrice, "BestAskPrice")
 	r.Equal(e.BestAskQty, a.BestAskQty, "BestAskQty")
+}
+
+// https://binance-docs.github.io/apidocs/spot/en/#all-book-tickers-stream
+func (s *websocketServiceTestSuite) TestWsAnnouncementServe() {
+	data := []byte(`{
+  "type": "DATA",
+  "topic": "com_announcement_en",
+  "data": "{\"catalogId\":161,\"catalogName\":\"Delisting\",\"publishDate\":1753257631403,\"title\":\"Notice of...\",\"body\":\"This is...\",\"disclaimer\":\"Trade on-the-go...\"}"
+}`)
+	fakeErrMsg := "fake error"
+	s.mockWsServe(data, errors.New(fakeErrMsg))
+	defer s.assertWsServe()
+
+	doneC, stopC, err := WsAnnouncementServe(WsAnnouncementParam{}, func(event *WsAnnouncementEvent) {
+		e := &WsAnnouncementEvent{
+			CatalogID:   161,
+			CatalogName: "Delisting",
+			PublishDate: 1753257631403,
+			Title:       "Notice of...",
+			Body:        "This is...",
+			Disclaimer:  "Trade on-the-go...",
+		}
+		s.assertWsAnnouncementEvent(e, event)
+	},
+		func(err error) {
+			s.r().EqualError(err, fakeErrMsg)
+		})
+
+	s.r().NoError(err)
+	stopC <- struct{}{}
+	<-doneC
+}
+
+func (s *websocketServiceTestSuite) assertWsAnnouncementEvent(e, a *WsAnnouncementEvent) {
+	r := s.r()
+	r.Equal(e.CatalogID, a.CatalogID, "CatalogID")
+	r.Equal(e.CatalogName, a.CatalogName, "CatalogName")
+	r.Equal(e.PublishDate, a.PublishDate, "PublishDate")
+	r.Equal(e.Title, a.Title, "Title")
+	r.Equal(e.Body, a.Body, "Body")
+	r.Equal(e.Disclaimer, a.Disclaimer, "Disclaimer")
+}
+
+func (s *websocketServiceTestSuite) TestWsUserDataServeSignatureErrorWithEmptyCredentials() {
+	apiKey := ""
+	secretKey := ""
+	keyType := "HMAC"
+	timeOffset := int64(0)
+
+	handler := func(event *WsUserDataEvent) {
+	}
+
+	errHandler := func(err error) {
+	}
+
+	_, _, err := WsUserDataServeSignature(apiKey, secretKey, keyType, timeOffset, handler, errHandler)
+
+	s.r().Error(err)
 }

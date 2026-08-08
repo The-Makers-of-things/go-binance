@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+
+	"github.com/adshao/go-binance/v2/common"
 )
 
 // ExchangeInfoService exchange info service
@@ -33,11 +35,11 @@ func (s *ExchangeInfoService) Do(ctx context.Context, opts ...RequestOption) (re
 
 // ExchangeInfo exchange info
 type ExchangeInfo struct {
-	Timezone        string        `json:"timezone"`
-	ServerTime      int64         `json:"serverTime"`
-	RateLimits      []RateLimit   `json:"rateLimits"`
-	ExchangeFilters []interface{} `json:"exchangeFilters"`
-	Symbols         []Symbol      `json:"symbols"`
+	Timezone        string      `json:"timezone"`
+	ServerTime      int64       `json:"serverTime"`
+	RateLimits      []RateLimit `json:"rateLimits"`
+	ExchangeFilters []any       `json:"exchangeFilters"`
+	Symbols         []Symbol    `json:"symbols"`
 }
 
 // RateLimit struct
@@ -50,29 +52,29 @@ type RateLimit struct {
 
 // Symbol market symbol
 type Symbol struct {
-	OrderType             []OrderType              `json:"OrderType"`
-	TimeInForce           []TimeInForceType        `json:"timeInForce"`
-	Filters               []map[string]interface{} `json:"filters"`
-	Symbol                string                   `json:"symbol"`
-	Pair                  string                   `json:"pair"`
-	ContractType          string                   `json:"contractType"`
-	DeliveryDate          int64                    `json:"deliveryDate"`
-	OnboardDate           int64                    `json:"onboardDate"`
-	ContractStatus        string                   `json:"contractStatus"`
-	ContractSize          int                      `json:"contractSize"`
-	PricePrecision        int                      `json:"pricePrecision"`
-	QuantityPrecision     int                      `json:"quantityPrecision"`
-	MaintMarginPercent    string                   `json:"maintMarginPercent"`
-	RequiredMarginPercent string                   `json:"requiredMarginPercent"`
-	QuoteAsset            string                   `json:"quoteAsset"`
-	BaseAsset             string                   `json:"baseAsset"`
-	MarginAsset           string                   `json:"marginAsset"`
-	BaseAssetPrecision    int                      `json:"baseAssetPrecision"`
-	QuotePrecision        int                      `json:"quotePrecision"`
-	EqualQtyPrecision     int                      `json:"equalQtyPrecision"`
-	TriggerProtect        string                   `json:"triggerProtect"`
-	UnderlyingType        string                   `json:"underlyingType"`
-	UnderlyingSubType     []interface{}            `json:"underlyingSubType"`
+	OrderType             []OrderType       `json:"OrderType"`
+	TimeInForce           []TimeInForceType `json:"timeInForce"`
+	Filters               []map[string]any  `json:"filters"`
+	Symbol                string            `json:"symbol"`
+	Pair                  string            `json:"pair"`
+	ContractType          string            `json:"contractType"`
+	DeliveryDate          int64             `json:"deliveryDate"`
+	OnboardDate           int64             `json:"onboardDate"`
+	ContractStatus        string            `json:"contractStatus"`
+	ContractSize          int               `json:"contractSize"`
+	PricePrecision        int               `json:"pricePrecision"`
+	QuantityPrecision     int               `json:"quantityPrecision"`
+	MaintMarginPercent    string            `json:"maintMarginPercent"`
+	RequiredMarginPercent string            `json:"requiredMarginPercent"`
+	QuoteAsset            string            `json:"quoteAsset"`
+	BaseAsset             string            `json:"baseAsset"`
+	MarginAsset           string            `json:"marginAsset"`
+	BaseAssetPrecision    int               `json:"baseAssetPrecision"`
+	QuotePrecision        int               `json:"quotePrecision"`
+	EqualQtyPrecision     int               `json:"equalQtyPrecision"`
+	TriggerProtect        string            `json:"triggerProtect"`
+	UnderlyingType        string            `json:"underlyingType"`
+	UnderlyingSubType     []any             `json:"underlyingSubType"`
 }
 
 // LotSizeFilter define lot size filter of symbol
@@ -91,7 +93,7 @@ type PriceFilter struct {
 
 // PercentPriceFilter define percent price filter of symbol
 type PercentPriceFilter struct {
-	MultiplierDecimal int    `json:"multiplierDecimal"`
+	MultiplierDecimal string `json:"multiplierDecimal"`
 	MultiplierUp      string `json:"multiplierUp"`
 	MultiplierDown    string `json:"multiplierDown"`
 }
@@ -105,6 +107,11 @@ type MarketLotSizeFilter struct {
 
 // MaxNumOrdersFilter define max num orders filter of symbol
 type MaxNumOrdersFilter struct {
+	Limit int64 `json:"limit"`
+}
+
+// MaxNumAlgoOrdersFilter define max num orders filter of symbol of algo
+type MaxNumAlgoOrdersFilter struct {
 	Limit int64 `json:"limit"`
 }
 
@@ -154,7 +161,7 @@ func (s *Symbol) PercentPriceFilter() *PercentPriceFilter {
 		if filter["filterType"].(string) == string(SymbolFilterTypePercentPrice) {
 			f := &PercentPriceFilter{}
 			if i, ok := filter["multiplierDecimal"]; ok {
-				f.MultiplierDecimal = int(i.(float64))
+				f.MultiplierDecimal = i.(string)
 			}
 			if i, ok := filter["multiplierUp"]; ok {
 				f.MultiplierUp = i.(string)
@@ -194,7 +201,25 @@ func (s *Symbol) MaxNumOrdersFilter() *MaxNumOrdersFilter {
 		if filter["filterType"].(string) == string(SymbolFilterTypeMaxNumOrders) {
 			f := &MaxNumOrdersFilter{}
 			if i, ok := filter["limit"]; ok {
-				f.Limit = int64(i.(float64))
+				if limit, okk := common.ToInt64(i); okk == nil {
+					f.Limit = limit
+				}
+			}
+			return f
+		}
+	}
+	return nil
+}
+
+// MaxNumAlgoOrdersFilter return max num orders filter of symbol
+func (s *Symbol) MaxNumAlgoOrdersFilter() *MaxNumAlgoOrdersFilter {
+	for _, filter := range s.Filters {
+		if filter["filterType"].(string) == string(SymbolFilterTypeMaxNumAlgoOrders) {
+			f := &MaxNumAlgoOrdersFilter{}
+			if i, ok := filter["limit"]; ok {
+				if limit, okk := common.ToInt64(i); okk == nil {
+					f.Limit = limit
+				}
 			}
 			return f
 		}

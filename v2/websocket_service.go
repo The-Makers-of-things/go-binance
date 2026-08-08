@@ -1,42 +1,75 @@
 package binance
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
-	stdjson "encoding/json"
-)
-
-// Endpoints
-const (
-	baseWsMainURL          = "wss://stream.binance.com:9443/ws"
-	baseWsTestnetURL       = "wss://testnet.binance.vision/ws"
-	baseCombinedMainURL    = "wss://stream.binance.com:9443/stream?streams="
-	baseCombinedTestnetURL = "wss://testnet.binance.vision/stream?streams="
+	"github.com/adshao/go-binance/v2/common/websocket"
+	"github.com/google/uuid"
+	gorilla "github.com/gorilla/websocket"
 )
 
 var (
+	// Endpoints
+	BaseWsMainURL          = "wss://stream.binance.com:9443/ws"
+	BaseWsTestnetURL       = "wss://stream.testnet.binance.vision/ws"
+	BaseWsDemoURL          = "wss://demo-stream.binance.com/ws"
+	BaseCombinedMainURL    = "wss://stream.binance.com:9443/stream?streams="
+	BaseCombinedTestnetURL = "wss://stream.testnet.binance.vision/stream?streams="
+	BaseCombinedDemoURL    = "wss://demo-stream.binance.com/stream?streams="
+	BaseWsApiMainURL       = "wss://ws-api.binance.com:443/ws-api/v3"
+	BaseWsApiTestnetURL    = "wss://ws-api.testnet.binance.vision/ws-api/v3"
+	BaseWsApiDemoURL       = "wss://demo-ws-api.binance.com/ws-api/v3"
+	BaseWsAnnouncementURL  = "wss://api.binance.com/sapi/wss"
+
 	// WebsocketTimeout is an interval for sending ping/pong messages if WebsocketKeepalive is enabled
-	WebsocketTimeout = time.Second * 60
+	WebsocketTimeout = time.Second * 600
+	// WebsocketPongTimeout is an interval for sending a PONG frame in response to PING frame from server
+	WebsocketPongTimeout = time.Second * 10
+	// WebsocketPingTimeout is an interval for waiting for a PONG response after sending a PING framer
+	WebsocketPingTimeout = time.Second * 10
 	// WebsocketKeepalive enables sending ping/pong messages to check the connection stability
-	WebsocketKeepalive = false
+	WebsocketKeepalive = true
+	// WebsocketTimeoutReadWriteConnection is an interval for sending ping/pong messages if WebsocketKeepalive is enabled
+	// using for websocket API (read/write)
+	WebsocketTimeoutReadWriteConnection = time.Second * 10
+	ProxyUrl                            = ""
 )
+
+func getWsProxyUrl() *string {
+	if ProxyUrl == "" {
+		return nil
+	}
+	return &ProxyUrl
+}
+
+func SetWsProxyUrl(url string) {
+	ProxyUrl = url
+}
 
 // getWsEndpoint return the base endpoint of the WS according the UseTestnet flag
 func getWsEndpoint() string {
 	if UseTestnet {
-		return baseWsTestnetURL
+		return BaseWsTestnetURL
 	}
-	return baseWsMainURL
+	if UseDemo {
+		return BaseWsDemoURL
+	}
+	return BaseWsMainURL
 }
 
 // getCombinedEndpoint return the base endpoint of the combined stream according the UseTestnet flag
 func getCombinedEndpoint() string {
 	if UseTestnet {
-		return baseCombinedTestnetURL
+		return BaseCombinedTestnetURL
 	}
-	return baseCombinedMainURL
+	if UseDemo {
+		return BaseCombinedDemoURL
+	}
+	return BaseCombinedMainURL
 }
 
 // WsPartialDepthEvent define websocket partial depth book event
@@ -116,21 +149,21 @@ func WsCombinedPartialDepthServe(symbolLevels map[string]string, handler WsParti
 		symbol := strings.Split(stream, "@")[0]
 		event.Symbol = strings.ToUpper(symbol)
 		data := j.Get("data").MustMap()
-		event.LastUpdateID, _ = data["lastUpdateId"].(stdjson.Number).Int64()
-		bidsLen := len(data["bids"].([]interface{}))
+		event.LastUpdateID, _ = data["lastUpdateId"].(json.Number).Int64()
+		bidsLen := len(data["bids"].([]any))
 		event.Bids = make([]Bid, bidsLen)
 		for i := 0; i < bidsLen; i++ {
-			item := data["bids"].([]interface{})[i].([]interface{})
+			item := data["bids"].([]any)[i].([]any)
 			event.Bids[i] = Bid{
 				Price:    item[0].(string),
 				Quantity: item[1].(string),
 			}
 		}
-		asksLen := len(data["asks"].([]interface{}))
+		asksLen := len(data["asks"].([]any))
 		event.Asks = make([]Ask, asksLen)
 		for i := 0; i < asksLen; i++ {
 
-			item := data["asks"].([]interface{})[i].([]interface{})
+			item := data["asks"].([]any)[i].([]any)
 			event.Asks[i] = Ask{
 				Price:    item[0].(string),
 				Quantity: item[1].(string),
@@ -237,23 +270,23 @@ func wsCombinedDepthServe(endpoint string, handler WsDepthHandler, errHandler Er
 		symbol := strings.Split(stream, "@")[0]
 		event.Symbol = strings.ToUpper(symbol)
 		data := j.Get("data").MustMap()
-		event.Time, _ = data["E"].(stdjson.Number).Int64()
-		event.LastUpdateID, _ = data["u"].(stdjson.Number).Int64()
-		event.FirstUpdateID, _ = data["U"].(stdjson.Number).Int64()
-		bidsLen := len(data["b"].([]interface{}))
+		event.Time, _ = data["E"].(json.Number).Int64()
+		event.LastUpdateID, _ = data["u"].(json.Number).Int64()
+		event.FirstUpdateID, _ = data["U"].(json.Number).Int64()
+		bidsLen := len(data["b"].([]any))
 		event.Bids = make([]Bid, bidsLen)
 		for i := 0; i < bidsLen; i++ {
-			item := data["b"].([]interface{})[i].([]interface{})
+			item := data["b"].([]any)[i].([]any)
 			event.Bids[i] = Bid{
 				Price:    item[0].(string),
 				Quantity: item[1].(string),
 			}
 		}
-		asksLen := len(data["a"].([]interface{}))
+		asksLen := len(data["a"].([]any))
 		event.Asks = make([]Ask, asksLen)
 		for i := 0; i < asksLen; i++ {
 
-			item := data["a"].([]interface{})[i].([]interface{})
+			item := data["a"].([]any)[i].([]any)
 			event.Asks[i] = Ask{
 				Price:    item[0].(string),
 				Quantity: item[1].(string),
@@ -272,6 +305,43 @@ func WsCombinedKlineServe(symbolIntervalPair map[string]string, handler WsKlineH
 	endpoint := getCombinedEndpoint()
 	for symbol, interval := range symbolIntervalPair {
 		endpoint += fmt.Sprintf("%s@kline_%s", strings.ToLower(symbol), interval) + "/"
+	}
+	endpoint = endpoint[:len(endpoint)-1]
+	cfg := newWsConfig(endpoint)
+	wsHandler := func(message []byte) {
+		j, err := newJSON(message)
+		if err != nil {
+			errHandler(err)
+			return
+		}
+
+		stream := j.Get("stream").MustString()
+		data := j.Get("data").MustMap()
+
+		symbol := strings.Split(stream, "@")[0]
+
+		jsonData, _ := json.Marshal(data)
+
+		event := new(WsKlineEvent)
+		err = json.Unmarshal(jsonData, event)
+		if err != nil {
+			errHandler(err)
+			return
+		}
+		event.Symbol = strings.ToUpper(symbol)
+
+		handler(event)
+	}
+	return wsServe(cfg, wsHandler, errHandler)
+}
+
+// WsCombinedKlineServeMultiInterval is similar to WsCombinedKlineServe, but it supports multiple intervals per symbol
+func WsCombinedKlineServeMultiInterval(symbolIntervals map[string][]string, handler WsKlineHandler, errHandler ErrHandler) (doneC, stopC chan struct{}, err error) {
+	endpoint := getCombinedEndpoint()
+	for symbol, intervals := range symbolIntervals {
+		for _, interval := range intervals {
+			endpoint += fmt.Sprintf("%s@kline_%s", strings.ToLower(symbol), interval) + "/"
+		}
 	}
 	endpoint = endpoint[:len(endpoint)-1]
 	cfg := newWsConfig(endpoint)
@@ -413,7 +483,7 @@ type WsAggTradeEvent struct {
 	LastBreakdownTradeID  int64  `json:"l"`
 	TradeTime             int64  `json:"T"`
 	IsBuyerMaker          bool   `json:"m"`
-	Placeholder           bool   `json:"M"` // add this field to avoid case insensitive unmarshaling
+	Placeholder           bool   `json:"M"` // add this field to avoid case insensitive unmarshalling
 }
 
 // WsTradeHandler handle websocket trade event
@@ -467,7 +537,7 @@ type WsTradeEvent struct {
 	SellerOrderID int64  `json:"a"`
 	TradeTime     int64  `json:"T"`
 	IsBuyerMaker  bool   `json:"m"`
-	Placeholder   bool   `json:"M"` // add this field to avoid case insensitive unmarshaling
+	Placeholder   bool   `json:"M"` // add this field to avoid case insensitive unmarshalling
 }
 
 type WsCombinedTradeEvent struct {
@@ -477,14 +547,17 @@ type WsCombinedTradeEvent struct {
 
 // WsUserDataEvent define user data event
 type WsUserDataEvent struct {
-	Event             UserDataEventType `json:"e"`
-	Time              int64             `json:"E"`
-	TransactionTime   int64             `json:"T"`
+	Event         UserDataEventType `json:"e"`
+	Time          int64             `json:"E"`
+	AccountUpdate WsAccountUpdateList
+	BalanceUpdate WsBalanceUpdate
+	OrderUpdate   WsOrderUpdate
+	OCOUpdate     WsOCOUpdate
+}
+
+type WsAccountUpdateList struct {
 	AccountUpdateTime int64             `json:"u"`
-	AccountUpdate     []WsAccountUpdate `json:"B"`
-	BalanceUpdate     WsBalanceUpdate
-	OrderUpdate       WsOrderUpdate
-	OCOUpdate         WsOCOUpdate
+	WsAccountUpdates  []WsAccountUpdate `json:"B"`
 }
 
 // WsAccountUpdate define account update
@@ -495,8 +568,9 @@ type WsAccountUpdate struct {
 }
 
 type WsBalanceUpdate struct {
-	Asset  string `json:"a"`
-	Change string `json:"d"`
+	Asset           string `json:"a"`
+	Change          string `json:"d"`
+	TransactionTime int64  `json:"T"`
 }
 
 type WsOrderUpdate struct {
@@ -508,7 +582,6 @@ type WsOrderUpdate struct {
 	Volume                  string          `json:"q"`
 	Price                   string          `json:"p"`
 	StopPrice               string          `json:"P"`
-	TrailingDelta           int64           `json:"d"` // Trailing Delta
 	IceBergVolume           string          `json:"F"`
 	OrderListId             int64           `json:"g"` // for OCO
 	OrigCustomOrderId       string          `json:"C"` // customized order ID for the original order
@@ -523,28 +596,51 @@ type WsOrderUpdate struct {
 	FeeCost                 string          `json:"n"`
 	TransactionTime         int64           `json:"T"`
 	TradeId                 int64           `json:"t"`
+	IgnoreI                 int64           `json:"I"` // ignore
 	IsInOrderBook           bool            `json:"w"` // is the order in the order book?
 	IsMaker                 bool            `json:"m"` // is this order maker?
+	IgnoreM                 bool            `json:"M"` // ignore
 	CreateTime              int64           `json:"O"`
 	FilledQuoteVolume       string          `json:"Z"` // the quote volume that already filled
 	LatestQuoteVolume       string          `json:"Y"` // the quote volume for the latest trade
 	QuoteVolume             string          `json:"Q"`
-	TrailingTime            int64           `json:"D"` // Trailing Time
-	StrategyId              int64           `json:"j"` // Strategy ID
-	StrategyType            int64           `json:"J"` // Strategy Type
-	WorkingTime             int64           `json:"W"` // Working Time
 	SelfTradePreventionMode string          `json:"V"`
+
+	//These are fields that appear in the payload only if certain conditions are met.
+	TrailingDelta              int64  `json:"d"` // Appears only for trailing stop orders.
+	TrailingTime               int64  `json:"D"`
+	StrategyId                 int64  `json:"j"` // Appears only if the strategyId parameter was provided upon order placement.
+	StrategyType               int64  `json:"J"` // Appears only if the strategyType parameter was provided upon order placement.
+	PreventedMatchId           int64  `json:"v"` // Appears only for orders that expired due to STP.
+	PreventedQuantity          string `json:"A"`
+	LastPreventedQuantity      string `json:"B"`
+	TradeGroupId               int64  `json:"u"`
+	CounterOrderId             int64  `json:"U"`
+	CounterSymbol              string `json:"Cs"`
+	PreventedExecutionQuantity string `json:"pl"`
+	PreventedExecutionPrice    string `json:"pL"`
+	PreventedExecutionQuoteQty string `json:"pY"`
+	WorkingTime                int64  `json:"W"` // Appears when the order is working on the book
+	MatchType                  string `json:"b"`
+	AllocationId               int64  `json:"a"`
+	WorkingFloor               string `json:"k"`  // Appears for orders that could potentially have allocations
+	UsedSor                    bool   `json:"uS"` // Appears for orders that used SOR
 }
 
 type WsOCOUpdate struct {
-	Symbol          string       `json:"s"`
-	OrderListId     int64        `json:"g"`
-	ContingencyType string       `json:"c"`
-	ListStatusType  string       `json:"l"`
-	ListOrderStatus string       `json:"L"`
-	RejectReason    string       `json:"r"`
-	ClientOrderId   string       `json:"C"` // List Client Order ID
-	Orders          []WsOCOOrder `json:"O"`
+	Symbol          string `json:"s"`
+	OrderListId     int64  `json:"g"`
+	ContingencyType string `json:"c"`
+	ListStatusType  string `json:"l"`
+	ListOrderStatus string `json:"L"`
+	RejectReason    string `json:"r"`
+	ClientOrderId   string `json:"C"` // List Client Order ID
+	TransactionTime int64  `json:"T"`
+	Orders          WsOCOOrderList
+}
+
+type WsOCOOrderList struct {
+	WsOCOOrders []WsOCOOrder `json:"O"`
 }
 
 type WsOCOOrder struct {
@@ -557,6 +653,7 @@ type WsOCOOrder struct {
 type WsUserDataHandler func(event *WsUserDataEvent)
 
 // WsUserDataServe serve user data handler with listen key
+// Deprecated: Listen key management is deprecated. Use WsUserDataServeSignature instead.
 func WsUserDataServe(listenKey string, handler WsUserDataHandler, errHandler ErrHandler) (doneC, stopC chan struct{}, err error) {
 	endpoint := fmt.Sprintf("%s/%s", getWsEndpoint(), listenKey)
 	cfg := newWsConfig(endpoint)
@@ -577,7 +674,11 @@ func WsUserDataServe(listenKey string, handler WsUserDataHandler, errHandler Err
 
 		switch UserDataEventType(j.Get("e").MustString()) {
 		case UserDataEventTypeOutboundAccountPosition:
-
+			err = json.Unmarshal(message, &event.AccountUpdate)
+			if err != nil {
+				errHandler(err)
+				return
+			}
 		case UserDataEventTypeBalanceUpdate:
 			err = json.Unmarshal(message, &event.BalanceUpdate)
 			if err != nil {
@@ -590,12 +691,6 @@ func WsUserDataServe(listenKey string, handler WsUserDataHandler, errHandler Err
 				errHandler(err)
 				return
 			}
-			// Unmarshal has case sensitive problem
-			event.TransactionTime = j.Get("T").MustInt64()
-			event.OrderUpdate.TransactionTime = j.Get("T").MustInt64()
-			event.OrderUpdate.Id = j.Get("i").MustInt64()
-			event.OrderUpdate.TradeId = j.Get("t").MustInt64()
-			event.OrderUpdate.FeeAsset = j.Get("N").MustString()
 		case UserDataEventTypeListStatus:
 			err = json.Unmarshal(message, &event.OCOUpdate)
 			if err != nil {
@@ -607,6 +702,186 @@ func WsUserDataServe(listenKey string, handler WsUserDataHandler, errHandler Err
 		handler(event)
 	}
 	return wsServe(cfg, wsHandler, errHandler)
+}
+
+// WsUserDataServeSignature serves user data handler using signature-based subscription via WebSocket API.
+// This is the recommended method as listen key management has been deprecated by Binance.
+// It connects to the WebSocket API endpoint and subscribes to user data stream using signature authentication.
+func WsUserDataServeSignature(apiKey, secretKey string, keyType string, timeOffset int64, handler WsUserDataHandler, errHandler ErrHandler) (doneC, stopC chan struct{}, err error) {
+	cfg := newWsConfig(getWsApiEndpoint())
+
+	doneC = make(chan struct{})
+	stopC = make(chan struct{})
+
+	conn, err := WsGetReadWriteConnection(cfg)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// Subscribe to user data stream using signature
+	reqData := websocket.NewRequestData(
+		uuid.New().String(),
+		apiKey,
+		secretKey,
+		timeOffset,
+		keyType,
+	)
+	subscribeRequest, err := websocket.CreateRequest(
+		reqData,
+		websocket.UserDataStreamSubscribeSignatureSpotWsApiMethod,
+		map[string]any{},
+	)
+	if err != nil {
+		conn.Close()
+		return nil, nil, err
+	}
+
+	// Send subscription request
+	err = conn.WriteMessage(gorilla.TextMessage, subscribeRequest)
+	if err != nil {
+		conn.Close()
+		return nil, nil, err
+	}
+
+	go func() {
+		defer close(doneC)
+		defer conn.Close()
+
+		go func() {
+			select {
+			case <-stopC:
+			case <-doneC:
+			}
+			conn.Close()
+		}()
+
+		for {
+			_, message, err := conn.ReadMessage()
+			if err != nil {
+				select {
+				case <-stopC:
+					return
+				default:
+					errHandler(err)
+					return
+				}
+			}
+
+			// Check if this is a subscription response
+			j, err := newJSON(message)
+			if err != nil {
+				select {
+				case <-stopC:
+					continue
+				default:
+					errHandler(err)
+					continue
+				}
+			}
+
+			// Skip subscription confirmation messages
+			if j.Get("id").MustString() != "" && j.Get("status").MustInt() == 200 {
+				continue
+			}
+
+			// Some WS API pushes wrap the payload inside an envelope like "event", "result" or "data".
+			// Determine the actual event payload to unmarshal from.
+			payload := message
+			// Try unwrap { event: {...} }
+			if ev, ok := j.CheckGet("event"); ok {
+				if m, mErr := ev.Map(); mErr == nil {
+					if raw, encErr := json.Marshal(m); encErr == nil {
+						payload = raw
+					}
+				}
+			}
+			// Try unwrap { result: {...} }
+			if res, ok := j.CheckGet("result"); ok {
+				if m, mErr := res.Map(); mErr == nil {
+					if raw, encErr := json.Marshal(m); encErr == nil {
+						payload = raw
+					}
+				}
+			}
+			// Try unwrap { data: {...} } (combined-like envelope)
+			if string(payload) == string(message) {
+				if data, ok := j.CheckGet("data"); ok {
+					if m, mErr := data.Map(); mErr == nil {
+						if raw, encErr := json.Marshal(m); encErr == nil {
+							payload = raw
+						}
+					}
+				}
+			}
+
+			// Parse user data event from the resolved payload
+			event := new(WsUserDataEvent)
+			if err = json.Unmarshal(payload, event); err != nil {
+				select {
+				case <-stopC:
+					continue
+				default:
+					errHandler(err)
+					continue
+				}
+			}
+
+			// Determine event type from payload
+			jj, _ := newJSON(payload)
+			evtType := UserDataEventType(jj.Get("e").MustString())
+			// ensure top-level fields are populated even if struct sub-unmarshal doesn't set them
+			event.Event = evtType
+			event.Time = jj.Get("E").MustInt64()
+
+			switch evtType {
+			case UserDataEventTypeOutboundAccountPosition:
+				if err = json.Unmarshal(payload, &event.AccountUpdate); err != nil {
+					select {
+					case <-stopC:
+						continue
+					default:
+						errHandler(err)
+						continue
+					}
+				}
+			case UserDataEventTypeBalanceUpdate:
+				if err = json.Unmarshal(payload, &event.BalanceUpdate); err != nil {
+					select {
+					case <-stopC:
+						continue
+					default:
+						errHandler(err)
+						continue
+					}
+				}
+			case UserDataEventTypeExecutionReport:
+				if err = json.Unmarshal(payload, &event.OrderUpdate); err != nil {
+					select {
+					case <-stopC:
+						continue
+					default:
+						errHandler(err)
+						continue
+					}
+				}
+			case UserDataEventTypeListStatus:
+				if err = json.Unmarshal(payload, &event.OCOUpdate); err != nil {
+					select {
+					case <-stopC:
+						continue
+					default:
+						errHandler(err)
+						continue
+					}
+				}
+			default:
+				// Unknown event; still forward to handler so callers can log/inspect
+			}
+			handler(event)
+		}
+	}()
+
+	return doneC, stopC, nil
 }
 
 // WsMarketStatHandler handle websocket that push single market statistics for 24hr
@@ -785,7 +1060,7 @@ func WsBookTickerServe(symbol string, handler WsBookTickerHandler, errHandler Er
 
 // WsCombinedBookTickerServe is similar to WsBookTickerServe, but it is for multiple symbols
 func WsCombinedBookTickerServe(symbols []string, handler WsBookTickerHandler, errHandler ErrHandler) (doneC, stopC chan struct{}, err error) {
-	endpoint := baseCombinedMainURL
+	endpoint := getCombinedEndpoint()
 	for _, s := range symbols {
 		endpoint += fmt.Sprintf("%s@bookTicker", strings.ToLower(s)) + "/"
 	}
@@ -817,4 +1092,113 @@ func WsAllBookTickerServe(handler WsBookTickerHandler, errHandler ErrHandler) (d
 		handler(event)
 	}
 	return wsServe(cfg, wsHandler, errHandler)
+}
+
+// WsApiInitReadWriteConn create and serve connection
+func WsApiInitReadWriteConn() (*gorilla.Conn, error) {
+	cfg := newWsConfig(getWsApiEndpoint())
+	conn, err := WsGetReadWriteConnection(cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	return conn, err
+}
+
+type WsAnnouncementEvent struct {
+	CatalogID   int64  `json:"catalogId"`
+	CatalogName string `json:"catalogName"`
+	PublishDate int64  `json:"publishDate"`
+	Title       string `json:"title"`
+	Body        string `json:"body"`
+	Disclaimer  string `json:"disclaimer"`
+}
+
+type WsAnnouncementParam struct {
+	Random     string
+	Topic      string
+	RecvWindow int64
+	Timestamp  int64
+	Signature  string
+	ApiKey     string
+}
+type WsAnnouncementHandler func(event *WsAnnouncementEvent)
+
+// WsAnnouncementServe establishes a WebSocket connection to listen for Binance announcements.
+// See API documentation: https://developers.binance.com/docs/cms/announcement
+//
+// Parameters:
+//
+//	params - Should be created using client.CreateAnnouncementParam
+//	handler - Callback function to handle incoming announcement messages
+//	errHandler - Error callback function for connection errors
+//
+// Returns:
+//
+//	doneC - Channel that closes when the connection terminates
+//	stopC - Channel that can be closed to stop the connection
+//	err - Any initial connection error
+func WsAnnouncementServe(params WsAnnouncementParam, handler WsAnnouncementHandler, errHandler ErrHandler) (doneC, stopC chan struct{}, err error) {
+	if UseTestnet || UseDemo {
+		return nil, nil, errors.New("testnet or demo is not supported")
+	}
+	endpoint := fmt.Sprintf("%s?random=%s&topic=%s&recvWindow=%d&timestamp=%d&signature=%s",
+		BaseWsAnnouncementURL, params.Random, params.Topic, params.RecvWindow, params.Timestamp, params.Signature,
+	)
+
+	cfg := newWsConfig(endpoint)
+	cfg.Header.Set("X-MBX-APIKEY", params.ApiKey)
+	wsHandler := func(message []byte) {
+		event := struct {
+			Type  string `json:"type"`
+			Topic string `json:"topic"`
+			Data  string `json:"data"`
+		}{}
+
+		err := json.Unmarshal(message, &event)
+		if err != nil {
+			errHandler(err)
+			return
+		}
+
+		switch event.Type {
+		case "COMMAND":
+			switch event.Data {
+			case "SUCCESS":
+				return
+			default:
+				errHandler(errors.New("command failed: " + event.Data))
+				return
+			}
+		case "DATA":
+			switch event.Topic {
+			case "com_announcement_en":
+				e := new(WsAnnouncementEvent)
+				if err := json.Unmarshal([]byte(event.Data), &e); err != nil {
+					errHandler(err)
+					return
+				}
+				handler(e)
+			default:
+				errHandler(errors.New("unsupported topic: " + event.Topic))
+				return
+			}
+		default:
+			errHandler(errors.New("unsupported type: " + event.Type))
+			return
+		}
+
+	}
+	return wsServeWithConnHandler(cfg, wsHandler, errHandler, keepAliveWithPing(30*time.Second, WebsocketTimeout))
+}
+
+// getWsApiEndpoint return the base endpoint of the API WS according the UseTestnet flag
+func getWsApiEndpoint() string {
+	if UseTestnet {
+		return BaseWsApiTestnetURL
+	}
+	if UseDemo {
+		return BaseWsApiDemoURL
+	}
+	return BaseWsApiMainURL
 }

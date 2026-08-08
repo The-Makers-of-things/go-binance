@@ -21,14 +21,18 @@ func (s *tickerServiceTestSuite) TestListBookTickers() {
             "bidPrice": "4.00000000",
             "bidQty": "431.00000000",
             "askPrice": "4.00000200",
-            "askQty": "9.00000000"
+            "askQty": "9.00000000",
+			"time":1757119264167,
+			"lastUpdateId":8524099887582
         },
         {
             "symbol": "ETHBTC",
             "bidPrice": "0.07946700",
             "bidQty": "9.00000000",
             "askPrice": "100000.00000000",
-            "askQty": "1000.00000000"
+            "askQty": "1000.00000000",
+			"time":1757119264167,
+			"lastUpdateId":8524099887582
         }
     ]`)
 	s.mockDo(data, nil)
@@ -44,18 +48,22 @@ func (s *tickerServiceTestSuite) TestListBookTickers() {
 	r.NoError(err)
 	r.Len(tickers, 2)
 	e1 := &BookTicker{
-		Symbol:      "LTCBTC",
-		BidPrice:    "4.00000000",
-		BidQuantity: "431.00000000",
-		AskPrice:    "4.00000200",
-		AskQuantity: "9.00000000",
+		Symbol:       "LTCBTC",
+		BidPrice:     "4.00000000",
+		BidQuantity:  "431.00000000",
+		AskPrice:     "4.00000200",
+		AskQuantity:  "9.00000000",
+		Time:         1757119264167,
+		LastUpdateId: 8524099887582,
 	}
 	e2 := &BookTicker{
-		Symbol:      "ETHBTC",
-		BidPrice:    "0.07946700",
-		BidQuantity: "9.00000000",
-		AskPrice:    "100000.00000000",
-		AskQuantity: "1000.00000000",
+		Symbol:       "ETHBTC",
+		BidPrice:     "0.07946700",
+		BidQuantity:  "9.00000000",
+		AskPrice:     "100000.00000000",
+		AskQuantity:  "1000.00000000",
+		Time:         1757119264167,
+		LastUpdateId: 8524099887582,
 	}
 	s.assertBookTickerEqual(e1, tickers[0])
 	s.assertBookTickerEqual(e2, tickers[1])
@@ -67,7 +75,9 @@ func (s *tickerServiceTestSuite) TestSingleBookTicker() {
             "bidPrice": "4.00000000",
             "bidQty": "431.00000000",
             "askPrice": "4.00000200",
-            "askQty": "9.00000000"
+            "askQty": "9.00000000",
+            "time":1757119264167,
+            "lastUpdateId":8524099887582
         }`)
 	s.mockDo(data, nil)
 	defer s.assertDo()
@@ -84,11 +94,13 @@ func (s *tickerServiceTestSuite) TestSingleBookTicker() {
 	r.NoError(err)
 	r.Len(tickers, 1)
 	e := &BookTicker{
-		Symbol:      "LTCBTC",
-		BidPrice:    "4.00000000",
-		BidQuantity: "431.00000000",
-		AskPrice:    "4.00000200",
-		AskQuantity: "9.00000000",
+		Symbol:       "LTCBTC",
+		BidPrice:     "4.00000000",
+		BidQuantity:  "431.00000000",
+		AskPrice:     "4.00000200",
+		AskQuantity:  "9.00000000",
+		Time:         1757119264167,
+		LastUpdateId: 8524099887582,
 	}
 	s.assertBookTickerEqual(e, tickers[0])
 }
@@ -100,6 +112,8 @@ func (s *tickerServiceTestSuite) assertBookTickerEqual(e, a *BookTicker) {
 	r.Equal(e.BidQuantity, a.BidQuantity, "BidQuantity")
 	r.Equal(e.AskPrice, a.AskPrice, "AskPrice")
 	r.Equal(e.AskQuantity, a.AskQuantity, "AskQuantity")
+	r.Equal(e.Time, a.Time, "Time")
+	r.Equal(e.LastUpdateId, a.LastUpdateId, "LastUpdateId")
 }
 
 func (s *tickerServiceTestSuite) TestListPrices() {
@@ -214,7 +228,7 @@ func (s *tickerServiceTestSuite) TestPriceChangeStats() {
 		Volume:             "8913.30000000",
 		OpenTime:           1499783499040,
 		CloseTime:          1499869899040,
-		FristID:            28385,
+		FirstID:            28385,
 		LastID:             28460,
 		Count:              76,
 	}
@@ -236,7 +250,7 @@ func (s *tickerServiceTestSuite) assertPriceChangeStatsEqual(e, a *PriceChangeSt
 	r.Equal(e.Volume, a.Volume, "Volume")
 	r.Equal(e.OpenTime, a.OpenTime, "OpenTime")
 	r.Equal(e.CloseTime, a.CloseTime, "CloseTime")
-	r.Equal(e.FristID, a.FristID, "FristID")
+	r.Equal(e.FirstID, a.FirstID, "FirstID")
 	r.Equal(e.LastID, a.LastID, "LastID")
 	r.Equal(e.Count, a.Count, "Count")
 }
@@ -289,7 +303,7 @@ func (s *tickerServiceTestSuite) TestListPriceChangeStats() {
 			QuoteVolume:        "15.30000000",
 			OpenTime:           1499783499040,
 			CloseTime:          1499869899040,
-			FristID:            28385,
+			FirstID:            28385,
 			LastID:             28460,
 			Count:              76,
 		},
